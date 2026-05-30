@@ -99,4 +99,45 @@ stage's findings, while keeping an isolated context.
 Concepts: [Sub-Agents](06-sub-agents.md), [Tools](05-tools.md),
 [Architecture](08-architecture.md).
 
+### Durability test — crash the worker and watch it resume
+
+This example is the best one for *seeing* durable execution in action, because
+its three sub-agents run for a while before the orchestrator's final
+`synthesize_result` activity — giving you a comfortable window to kill the
+worker mid-run and prove the agent survives.
+
+1. **Start the worker** and submit the task as usual:
+
+   ```bash
+   # Terminal 1
+   uv run python examples/03_code_archaeologist/worker.py
+
+   # Terminal 2
+   uv run python examples/03_code_archaeologist/client.py
+   ```
+
+2. **Watch the Web UI** at <http://localhost:8233>. Wait until the three child
+   workflows (archaeologist, modernizer, documenter) have completed and the
+   parent reaches the final **`synthesize_result`** activity.
+
+3. **Kill the worker** — press `Ctrl-C` in Terminal 1 while `synthesize_result`
+   is running. The client in Terminal 2 keeps waiting; nothing is lost.
+
+4. **Observe the retry.** In the Web UI the `synthesize_result` activity is now
+   *pending* and retrying (`Attempt n / ∞`) against an empty task queue. The
+   already-completed `create_plan` and the three child workflows stay
+   **completed** — none of that work re-runs.
+
+5. **Restart the worker** — run the Terminal 1 command again. The moment it
+   reconnects, the pending `synthesize_result` activity is picked up, completes,
+   and the workflow finishes. Terminal 2 prints the final result as if nothing
+   happened.
+
+What this proves: agent state lives in Temporal's event history, not in the
+worker process. A crash mid-run does not lose the three sub-agent results or
+restart the pipeline — only the in-flight activity is retried, and execution
+resumes exactly where it left off. See
+[Core Concepts → Two retry layers](03-core-concepts.md) for why transient
+infrastructure faults like this are handled transparently by Temporal.
+
 Next: [Configuration](10-configuration.md).
