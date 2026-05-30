@@ -1,0 +1,3 @@
+# Dynamic config overrides for local dev
+# See: https://github.com/temporalio/temporal/blob/main/config/dynamicconfig/development-sql.yaml
+
