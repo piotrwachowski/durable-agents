@@ -9,8 +9,17 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 load_dotenv()
 
-# ── OpenAI ────────────────────────────────────────────────────────────────────
-OPENAI_API_KEY: str = os.environ["OPENAI_API_KEY"]
+# ── OpenAI (and OpenAI-compatible servers: Ollama, vLLM, …) ───────────────────
+# Point OPENAI_BASE_URL at a local OpenAI-compatible endpoint to use local models
+# (e.g. http://localhost:11434/v1 for Ollama). When a base URL is set, the API key
+# is optional — local servers ignore it — so we fall back to a placeholder instead
+# of hard-failing at startup.
+OPENAI_BASE_URL: str = os.getenv("OPENAI_BASE_URL", "")
+OPENAI_API_KEY: str = (
+    os.environ["OPENAI_API_KEY"]
+    if not OPENAI_BASE_URL
+    else os.getenv("OPENAI_API_KEY", "local")
+)
 OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "4096"))
 

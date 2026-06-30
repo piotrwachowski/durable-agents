@@ -5,18 +5,32 @@ import json
 from openai import AsyncOpenAI
 from temporalio import activity
 
-from durable_agents.config import LLM_MAX_TOKENS, OPENAI_API_KEY
+from durable_agents.config import LLM_MAX_TOKENS, OPENAI_API_KEY, OPENAI_BASE_URL
 from durable_agents.harness.registry import registry
 from durable_agents.harness.state import get_agent_config
 from durable_agents.models import ItemResult, Plan, TodoItem
 
 # Module-level client — created outside workflow code (determinism safe).
-_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+# OPENAI_BASE_URL (when set) targets an OpenAI-compatible server such as Ollama
+# or vLLM; left empty it defaults to the OpenAI cloud endpoint.
+_client = AsyncOpenAI(api_key=OPENAI_API_KEY, base_url=OPENAI_BASE_URL or None)
+
+# Provider prefixes that _model_name() should strip. Ollama/vLLM model tags may
+# themselves contain a colon (quantization, e.g. ':Q4_K_M'), so only these known
+# prefixes are removed.
+_KNOWN_PROVIDER_PREFIXES = frozenset({"openai"})
 
 
 def _model_name(model: str) -> str:
-    """Strip the provider prefix, e.g. 'openai:gpt-4o-mini' -> 'gpt-4o-mini'."""
-    return model.split(":", 1)[-1]
+    """Strip a leading provider prefix, e.g. 'openai:gpt-4o-mini' -> 'gpt-4o-mini'.
+
+    Only a recognised provider prefix is stripped, so Ollama-style tags that embed
+    a quantization after a colon (e.g. 'org/model:Q4_K_M') are preserved intact.
+    """
+    prefix, sep, rest = model.partition(":")
+    if sep and prefix in _KNOWN_PROVIDER_PREFIXES:
+        return rest
+    return model
 
 
 # -- Schema helpers -----------------------------------------------------------

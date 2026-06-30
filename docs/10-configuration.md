@@ -20,7 +20,8 @@ missing key raises `KeyError` at startup. Every other value has a default.
 
 | Variable | Default | Used for |
 |---|---|---|
-| `OPENAI_API_KEY` | *required* | Authenticating with OpenAI. No default; startup fails without it. |
+| `OPENAI_API_KEY` | *required* | Authenticating with OpenAI. No default; startup fails without it — **unless `OPENAI_BASE_URL` is set**, in which case it defaults to a placeholder (`local`). |
+| `OPENAI_BASE_URL` | *(empty)* | Base URL of an OpenAI-compatible server (e.g. `http://localhost:11434/v1` for Ollama, or a vLLM endpoint). Empty means the OpenAI cloud API. See [Local models](12-local-models.md). |
 | `OPENAI_MODEL` | `gpt-4o-mini` | Default model name (the part after the `openai:` prefix). |
 | `LLM_MAX_TOKENS` | `4096` | Max tokens per LLM completion. |
 | `TEMPORAL_HOST` | `localhost:7233` | Temporal server gRPC address. |

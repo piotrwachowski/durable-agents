@@ -17,6 +17,7 @@ internal architecture.
 9. [Examples](09-examples.md) — a guided tour of the bundled examples.
 10. [Configuration](10-configuration.md) — the full environment-variable reference.
 11. [Roadmap](11-roadmap.md) — implemented phases and what is planned next.
+12. [Local models](12-local-models.md) — run the agents on Ollama or vLLM with local models (e.g. Bielik, PLLuM).
 
 ## How to read these docs
 
