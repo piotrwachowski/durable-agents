@@ -35,6 +35,21 @@ class AgentConfig:
 
 
 @dataclass
+class RuntimeConfig:
+    """Per-run agent settings resolved on the worker and returned to the workflow.
+
+    The workflow runs in Temporal's sandbox where the process-local agent
+    registry is not visible, so it cannot read AgentConfig directly. This
+    lightweight value is produced by the ``load_runtime_config`` activity (which
+    runs as ordinary host code) and carried in event history.
+    """
+
+    model: str
+    system_prompt: str | None = None
+    context_limit: int = 6000
+
+
+@dataclass
 class TodoItem:
     id: int
     title: str

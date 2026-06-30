@@ -16,11 +16,10 @@ with workflow.unsafe.imports_passed_through():
     from durable_agents.activities.planner import (
         create_plan,
         execute_plan_item,
+        load_runtime_config,
         prepare_delegation,
         synthesize_result,
     )
-    from durable_agents.config import CONTEXT_LIMIT
-    from durable_agents.harness.state import get_agent_config
     from durable_agents.models import AgentInput, ItemResult, Plan, TodoItem
 
 
@@ -61,12 +60,17 @@ class AgentWorkflow:
 
     @workflow.run
     async def run(self, agent_input: AgentInput) -> str:
-        config = get_agent_config(workflow.info().task_queue)
-        default_model = "openai:gpt-4o-mini"
-        model: str = agent_input.model_override or (config.model if config else default_model)
-        system_prompt: str | None = config.system_prompt if config else None
+        # The process-local agent registry is not visible inside the workflow
+        # sandbox, so resolve model / system_prompt / context_limit via an
+        # activity (host code) and carry the result in event history.
+        runtime = await workflow.execute_activity(
+            load_runtime_config,
+            start_to_close_timeout=timedelta(seconds=30),
+        )
+        model: str = agent_input.model_override or runtime.model
+        system_prompt: str | None = runtime.system_prompt
         max_steps: int = agent_input.max_steps
-        context_limit: int = config.context_limit if config else CONTEXT_LIMIT
+        context_limit: int = runtime.context_limit
 
         history: list[dict] = []
         if system_prompt:

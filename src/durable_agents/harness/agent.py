@@ -42,6 +42,7 @@ class Agent:
         from durable_agents.activities.planner import (
             create_plan,
             execute_plan_item,
+            load_runtime_config,
             prepare_delegation,
             synthesize_result,
         )
@@ -61,6 +62,7 @@ class Agent:
                 synthesize_result,
                 dispatch_tool,
                 summarise_context,
+                load_runtime_config,
             ],
         ):
             await asyncio.get_running_loop().create_future()

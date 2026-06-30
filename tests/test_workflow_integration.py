@@ -17,8 +17,13 @@ import pytest
 from temporalio import activity
 from temporalio.worker import Worker
 
-from durable_agents.models import AgentInput, ItemResult, Plan, TodoItem
+from durable_agents.models import AgentInput, ItemResult, Plan, RuntimeConfig, TodoItem
 from durable_agents.workflows.agent_workflow import AgentWorkflow
+
+
+@activity.defn(name="load_runtime_config")
+async def stub_load_runtime_config() -> RuntimeConfig:
+    return RuntimeConfig(model="openai:gpt-4o-mini", system_prompt=None, context_limit=6000)
 
 
 @activity.defn(name="create_plan")
@@ -79,6 +84,7 @@ async def test_agent_workflow_runs_full_loop() -> None:
             task_queue=task_queue,
             workflows=[AgentWorkflow],
             activities=[
+                stub_load_runtime_config,
                 stub_create_plan,
                 stub_execute_plan_item,
                 stub_dispatch_tool,

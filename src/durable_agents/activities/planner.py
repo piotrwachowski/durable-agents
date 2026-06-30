@@ -5,10 +5,15 @@ import json
 from openai import AsyncOpenAI
 from temporalio import activity
 
-from durable_agents.config import LLM_MAX_TOKENS, OPENAI_API_KEY, OPENAI_BASE_URL
+from durable_agents.config import (
+    CONTEXT_LIMIT,
+    LLM_MAX_TOKENS,
+    OPENAI_API_KEY,
+    OPENAI_BASE_URL,
+)
 from durable_agents.harness.registry import registry
 from durable_agents.harness.state import get_agent_config
-from durable_agents.models import ItemResult, Plan, TodoItem
+from durable_agents.models import ItemResult, Plan, RuntimeConfig, TodoItem
 
 # Module-level client — created outside workflow code (determinism safe).
 # OPENAI_BASE_URL (when set) targets an OpenAI-compatible server such as Ollama
@@ -31,6 +36,30 @@ def _model_name(model: str) -> str:
     if sep and prefix in _KNOWN_PROVIDER_PREFIXES:
         return rest
     return model
+
+
+_DEFAULT_MODEL = "openai:gpt-4o-mini"
+
+
+@activity.defn
+async def load_runtime_config() -> RuntimeConfig:
+    """Resolve this agent's runtime settings from the worker-local registry.
+
+    The workflow runs inside Temporal's sandbox and cannot see the process-local
+    agent registry, so it delegates resolution to this activity (ordinary host
+    code). The task queue is auto-detected from the activity context, matching
+    the workflow that scheduled it.
+    """
+    config = get_agent_config()  # auto-detects task_queue from activity context
+    if config is None:
+        return RuntimeConfig(
+            model=_DEFAULT_MODEL, system_prompt=None, context_limit=CONTEXT_LIMIT
+        )
+    return RuntimeConfig(
+        model=config.model,
+        system_prompt=config.system_prompt,
+        context_limit=config.context_limit,
+    )
 
 
 # -- Schema helpers -----------------------------------------------------------
