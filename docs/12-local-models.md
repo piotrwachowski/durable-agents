@@ -101,15 +101,21 @@ from the `ollama` service.
 ## Option B: vLLM
 
 vLLM serves a single model over an OpenAI-compatible API and is a good fit for
-higher throughput or full-precision weights. The official Docker image is the
-most portable way to run it on a GPU host:
+higher throughput. Unlike Ollama's GGUF tags (`:Q8_0`, `:Q4_K_M`), vLLM loads
+**Hugging Face checkpoints** and its native quantization formats are **FP8**,
+**AWQ** and **GPTQ** — so the Ollama tag you use locally does not carry over
+verbatim; you pick an equivalent HF checkpoint instead.
+
+The recommended quantized starting point is SpeakLeash's **official FP8**
+checkpoint, which vLLM detects automatically (no `--quantization` flag needed):
 
 ```bash
 docker run --rm --gpus all \
   -p 8000:8000 \
+  -e HUGGING_FACE_HUB_TOKEN="$HF_TOKEN" \
   -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
   vllm/vllm-openai:latest \
-  --model speakleash/Bielik-11B-v3.0-Instruct \
+  --model speakleash/Bielik-11B-v3.0-Instruct-FP8-Dynamic \
   --enable-auto-tool-choice \
   --tool-call-parser hermes \
   --max-model-len 8192 \
@@ -119,21 +125,37 @@ docker run --rm --gpus all \
 Notes:
 
 - `--enable-auto-tool-choice` + `--tool-call-parser` are **required** for the
-  agent's tool calling. The correct parser depends on the model's chat template
-  (`hermes`, `llama3_json`, `mistral`, …); check the model card and vLLM's
+  agent's tool calling. Bielik v3.0 uses the **ChatML** prompt format, so
+  `hermes` is the correct parser. For other models the parser depends on their
+  chat template (`llama3_json`, `mistral`, …); check the model card and vLLM's
   [tool-calling docs](https://docs.vllm.ai/en/latest/features/tool_calling.html).
-- Full-precision weights are large. If a model does not fit in available VRAM,
-  use a quantised checkpoint (AWQ/GPTQ) and add `--quantization awq` (or `gptq`),
-  and/or lower `--max-model-len` and `--gpu-memory-utilization`.
+- SpeakLeash checkpoints are **gated** on Hugging Face: accept the model's terms
+  once, then pass a read token via `HUGGING_FACE_HUB_TOKEN` (shown above) so the
+  container can download the weights.
 - vLLM targets Linux + NVIDIA. On Windows, run it inside WSL2 or via the Docker
-  image above.
+  image above. FP8 runs natively on recent GPUs (Ada/Hopper) and falls back to a
+  Marlin kernel on older ones; if VRAM is tight, lower `--max-model-len` and
+  `--gpu-memory-utilization`.
+
+### Choosing a vLLM quantization
+
+| Format | Example checkpoint | How to enable | When to use |
+|---|---|---|---|
+| **FP8** | `speakleash/Bielik-11B-v3.0-Instruct-FP8-Dynamic` | auto-detected (no flag) | Recommended default — official, near-lossless, vLLM-native. |
+| **AWQ / GPTQ** | a community `…-AWQ` / `…-GPTQ` build | `--quantization awq` (or `gptq`) | Smallest footprint when FP8 is unavailable for your GPU. |
+| **BF16 (full)** | `speakleash/Bielik-11B-v3.0-Instruct` | no flag | Highest quality; needs the most VRAM. |
+| GGUF | a `…-GGUF` file | `--model <file>.gguf` (experimental) | Only to reuse an existing GGUF; FP8/AWQ are faster on vLLM. |
+
+Browse current options in the
+[Bielik v3.0 quantizations collection](https://huggingface.co/collections/speakleash/bielik-11b-v30)
+and verify the exact repo name before pulling.
 
 Point the framework at it:
 
 ```bash
 # .env
 OPENAI_BASE_URL=http://localhost:8000/v1
-OPENAI_MODEL=speakleash/Bielik-11B-v3.0-Instruct
+OPENAI_MODEL=speakleash/Bielik-11B-v3.0-Instruct-FP8-Dynamic
 ```
 
 ## Choosing a model
@@ -192,6 +214,9 @@ See [Configuration → per-agent / per-run overrides](10-configuration.md#per-ag
   make sure `OPENAI_MODEL` exactly matches the served tag.
 - **`pull model manifest: file does not exist`** — the tag has no `:latest`;
   include an explicit quantization tag, e.g. `...:Q4_K_M`.
+- **vLLM `401`/`gated repo` on startup** — the SpeakLeash checkpoint requires
+  accepting its terms on Hugging Face and a read token; pass it via
+  `HUGGING_FACE_HUB_TOKEN`.
 - **Plans never form / malformed tool calls** — the model likely lacks reliable
   tool support. Switch to a tool-capable model, or for vLLM verify
   `--enable-auto-tool-choice` and the correct `--tool-call-parser`.
