@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import re
+import uuid
 
 from openai import AsyncOpenAI
 from temporalio import activity
@@ -134,6 +136,88 @@ _COMPLETE_ITEM_SCHEMA: dict = {
 }
 
 
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+
+def _iter_json_objects(text: str):
+    """Yield top-level JSON objects parsed from arbitrary *text*.
+
+    Scans for balanced ``{...}`` spans (ignoring braces inside strings) and
+    attempts ``json.loads`` on each. Used to recover tool calls from
+    OpenAI-compatible backends that place a valid-JSON tool call in
+    ``message.content`` instead of the structured ``tool_calls`` field.
+    """
+    depth = 0
+    start = -1
+    in_str = False
+    escape = False
+    for i, ch in enumerate(text):
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}" and depth > 0:
+            depth -= 1
+            if depth == 0 and start != -1:
+                try:
+                    obj = json.loads(text[start : i + 1])
+                except json.JSONDecodeError:
+                    obj = None
+                if isinstance(obj, dict):
+                    yield obj
+                start = -1
+
+
+def _recover_tool_call(content: str | None) -> tuple[str, dict] | None:
+    """Recover a ``(name, arguments)`` tool call emitted as text in *content*.
+
+    Some OpenAI-compatible backends (notably Ollama-served models) return the
+    function call as JSON text in ``message.content`` rather than populating the
+    structured ``tool_calls`` field. This recovers the first object exposing a
+    string ``name`` and a dict ``arguments`` (or ``parameters``). Returns None
+    when no such object is present.
+    """
+    if not content:
+        return None
+    cleaned = _THINK_RE.sub("", content)
+    for obj in _iter_json_objects(cleaned):
+        name = obj.get("name")
+        args = obj.get("arguments")
+        if args is None:
+            args = obj.get("parameters")
+        if isinstance(name, str) and isinstance(args, dict):
+            return name, args
+    return None
+
+
+def _recover_plan_args(content: str | None) -> dict | None:
+    """Recover ``write_plan`` arguments from a text-emitted tool call.
+
+    Handles both the wrapped form ``{"name": "write_plan", "arguments": {...}}``
+    and a bare arguments object ``{"items": [...]}`` that some models emit.
+    """
+    if not content:
+        return None
+    recovered = _recover_tool_call(content)
+    if recovered is not None and isinstance(recovered[1].get("items"), list):
+        return recovered[1]
+    for obj in _iter_json_objects(_THINK_RE.sub("", content)):
+        if isinstance(obj.get("items"), list):
+            return obj
+    return None
+
+
 # -- Activities ---------------------------------------------------------------
 
 
@@ -202,14 +286,19 @@ async def create_plan(
     )
 
     tool_call = response.choices[0].message.tool_calls
-    if not tool_call:
-        return Plan(items=[TodoItem(id=1, title="Execute task", description=task, type="wait")])
+    if tool_call:
+        try:
+            args = json.loads(tool_call[0].function.arguments or "{}")
+        except json.JSONDecodeError:
+            # Truncated/malformed structured JSON — fall back to a single step.
+            args = None
+    else:
+        # Some OpenAI-compatible backends place a valid-JSON tool call in
+        # `content` instead of the structured tool_calls field. Recover it
+        # before falling back.
+        args = _recover_plan_args(response.choices[0].message.content)
 
-    try:
-        args = json.loads(tool_call[0].function.arguments or "{}")
-    except json.JSONDecodeError:
-        # Truncated/malformed plan JSON — fall back to a single execute step
-        # rather than crashing the planning activity.
+    if not isinstance(args, dict):
         return Plan(items=[TodoItem(id=1, title="Execute task", description=task, type="wait")])
 
     # Resolve sub-agent task queues ONLY from this agent's own config, never
@@ -300,28 +389,34 @@ async def execute_plan_item(
     choice = response.choices[0]
     tool_calls = choice.message.tool_calls
 
-    if not tool_calls:
-        content = choice.message.content or ""
-        return ItemResult(item_id=item.id, output=content)
-
-    called = tool_calls[0]
-    fn_name = called.function.name  # type: ignore[union-attr]
-
-    # The model occasionally emits malformed or truncated JSON for the tool
-    # arguments (most often when a single call — e.g. write_file with a whole
-    # file's contents — exceeds max_tokens and gets cut off mid-string). Treat
-    # that as a recoverable observation rather than crashing the activity so the
-    # ReAct loop can retry with a well-formed / smaller call.
-    try:
-        fn_args = json.loads(called.function.arguments or "{}")  # type: ignore[union-attr]
-    except json.JSONDecodeError:
-        fn_args = None
+    if tool_calls:
+        called = tool_calls[0]
+        fn_name = called.function.name  # type: ignore[union-attr]
+        tool_call_id = called.id
+        # The model occasionally emits malformed or truncated JSON for the tool
+        # arguments (most often when a single call — e.g. write_file with a whole
+        # file's contents — exceeds max_tokens and gets cut off mid-string).
+        # Treat that as a recoverable observation rather than crashing the
+        # activity so the ReAct loop can retry with a well-formed / smaller call.
+        try:
+            fn_args = json.loads(called.function.arguments or "{}")  # type: ignore[union-attr]
+        except json.JSONDecodeError:
+            fn_args = None
+    else:
+        # Recover a tool call emitted as plain-text JSON by OpenAI-compatible
+        # backends that don't populate the structured tool_calls field. With no
+        # recoverable call, treat the content as the item's completion.
+        recovered = _recover_tool_call(choice.message.content)
+        if recovered is None:
+            return ItemResult(item_id=item.id, output=choice.message.content or "")
+        fn_name, fn_args = recovered
+        tool_call_id = f"call_{uuid.uuid4().hex[:12]}"
 
     if fn_name == "complete_item":
         output = fn_args.get("output", "") if isinstance(fn_args, dict) else ""
         return ItemResult(item_id=item.id, output=output)
 
-    if fn_args is None:
+    if not isinstance(fn_args, dict):
         # Hand the call to the workflow with empty args; dispatch_tool will
         # surface the resulting error as a tool observation the model can react
         # to on the next turn instead of failing the workflow.
@@ -340,7 +435,7 @@ async def execute_plan_item(
         output="",  # filled in by workflow after dispatch_tool
         tool_name=fn_name,
         tool_args=fn_args,
-        tool_call_id=called.id,
+        tool_call_id=tool_call_id,
         tool_timeout_seconds=tool_timeout_seconds,
         tool_max_retries=tool_max_retries,
     )
