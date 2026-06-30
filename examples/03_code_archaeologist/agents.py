@@ -15,13 +15,22 @@ Task queues:
 """
 from __future__ import annotations
 
+import os
+
 from durable_agents import create_durable_agent
 from durable_agents.tools.filesystem import list_dir, read_file, search_files, write_file
+
+# Model for every agent below. Reads OPENAI_MODEL from the environment so the
+# example works against OpenAI or a local server (Ollama/vLLM) without edits;
+# the "openai:" provider prefix is added if missing. See docs/12-local-models.md.
+_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+if not _MODEL.startswith("openai:"):
+    _MODEL = f"openai:{_MODEL}"
 
 # ── Sub-agents ────────────────────────────────────────────────────────────────
 
 archaeologist_agent = create_durable_agent(
-    model="openai:gpt-4o-mini",
+    model=_MODEL,
     tools=[read_file, search_files, list_dir],
     system_prompt=(
         "You are a Code Archaeologist. Your job is to read legacy Python source files "
@@ -40,7 +49,7 @@ archaeologist_agent = create_durable_agent(
 )
 
 modernizer_agent = create_durable_agent(
-    model="openai:gpt-4o-mini",
+    model=_MODEL,
     tools=[read_file, write_file],
     system_prompt=(
         "You are a Python Modernizer. Your job is to rewrite legacy Python files "
@@ -58,7 +67,7 @@ modernizer_agent = create_durable_agent(
 )
 
 documenter_agent = create_durable_agent(
-    model="openai:gpt-4o-mini",
+    model=_MODEL,
     tools=[read_file, write_file],
     system_prompt=(
         "You are a Python Documenter. Your job is to add comprehensive documentation "
@@ -77,7 +86,7 @@ documenter_agent = create_durable_agent(
 # ── Orchestrator ─────────────────────────────────────────────────────────────
 
 orchestrator_agent = create_durable_agent(
-    model="openai:gpt-4o-mini",
+    model=_MODEL,
     tools=[],
     sub_agents={
         "archaeologist": archaeologist_agent,

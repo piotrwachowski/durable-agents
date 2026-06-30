@@ -15,8 +15,16 @@ The writer and reviewer appear as child workflows of the planner.
 from __future__ import annotations
 
 import asyncio
+import os
 
 from durable_agents import create_durable_agent, tool
+
+# Model for every agent below. Reads OPENAI_MODEL from the environment so the
+# example works against OpenAI or a local server (Ollama/vLLM) without edits;
+# the "openai:" provider prefix is added if missing. See docs/12-local-models.md.
+_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+if not _MODEL.startswith("openai:"):
+    _MODEL = f"openai:{_MODEL}"
 
 
 @tool
@@ -42,7 +50,7 @@ async def review_content(content: str) -> str:
 
 
 writer_agent = create_durable_agent(
-    model="openai:gpt-4o-mini",
+    model=_MODEL,
     tools=[draft_content],
     system_prompt=(
         "You are a creative writing assistant. "
@@ -53,7 +61,7 @@ writer_agent = create_durable_agent(
 )
 
 reviewer_agent = create_durable_agent(
-    model="openai:gpt-4o-mini",
+    model=_MODEL,
     tools=[review_content],
     system_prompt=(
         "You are an editorial reviewer. "
@@ -64,7 +72,7 @@ reviewer_agent = create_durable_agent(
 )
 
 planner_agent = create_durable_agent(
-    model="openai:gpt-4o-mini",
+    model=_MODEL,
     tools=[],
     sub_agents={
         "writer": writer_agent,
